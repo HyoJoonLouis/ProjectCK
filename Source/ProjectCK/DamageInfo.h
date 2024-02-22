@@ -19,30 +19,30 @@ enum class EDamageResponse : uint8
 	STUN	UMETA(DisplayName = "Stun")
 };
 
-USTRUCT(BlueprintType)
+USTRUCT(Blueprintable)
 struct FDamageInfo
 {
 public:
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	float Amount;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	EDamageType DamageType;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	EDamageResponse DamageResponse;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool ShouldDamageInvincible;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool CanParry;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool CanDodge;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool ForceInterrupt;
 };
