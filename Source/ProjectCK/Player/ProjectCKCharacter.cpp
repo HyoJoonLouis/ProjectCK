@@ -11,6 +11,7 @@
 #include "InputActionValue.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Blueprint/UserWidget.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
@@ -101,6 +102,13 @@ void AProjectCKCharacter::BeginPlay()
 		{
 			Subsystem->AddMappingContext(DefaultMappingContext, 0);
 		}
+	}
+
+	if (HUDClass)
+	{
+		HUD = Cast<UUserWidget>(CreateWidget(GetWorld(), HUDClass));
+		if(HUD)
+			HUD->AddToViewport();
 	}
 }
 

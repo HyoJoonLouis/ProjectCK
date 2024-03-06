@@ -12,7 +12,7 @@ UCLASS(config=Game)
 class AProjectCKCharacter : public ACharacter, public IDamagableInterface
 {
 	GENERATED_BODY()
-
+protected:
 	// Camera
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	class USpringArmComponent* CameraBoom;
@@ -41,6 +41,12 @@ class AProjectCKCharacter : public ACharacter, public IDamagableInterface
 	UPROPERTY(EditAnywhere)
 	class UDamageSystemComponent* DamageSystemComponent;
 
+	// UI
+	UPROPERTY(EditAnywhere)
+	TSubclassOf<UUserWidget> HUDClass;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	class UUserWidget* HUD;
+
 public:
 	AProjectCKCharacter();
 
@@ -66,7 +72,6 @@ protected:
 			
 protected:
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
-	
 	virtual void BeginPlay();
 
 public:
