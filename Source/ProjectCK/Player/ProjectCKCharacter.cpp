@@ -12,6 +12,9 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Blueprint/UserWidget.h"
+#include "Kismet/KismetMathLibrary.h"
+#include "MotionWarpingComponent.h"
+
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
@@ -48,6 +51,7 @@ AProjectCKCharacter::AProjectCKCharacter()
 	FollowCamera->FieldOfView = 78;
 
 	DamageSystemComponent = CreateDefaultSubobject<UDamageSystemComponent>(TEXT("DamageSystem"));
+	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarping"));
 }
 
 // DamagableInterface
@@ -66,7 +70,7 @@ void AProjectCKCharacter::Heal_Implementation(float Amount)
 	DamageSystemComponent->Heal(Amount);
 }
 
-bool AProjectCKCharacter::TakeDamage_Implementation(FDamageInfo DamageInfo)
+bool AProjectCKCharacter::TakeDamage_Implementation(AActor* CauseActor, FDamageInfo DamageInfo)
 {
 	GetMesh()->GetAnimInstance()->Montage_Play(TakeDamageMontage, 2.0f);
 	return DamageSystemComponent->TakeDamage(DamageInfo);
@@ -79,7 +83,7 @@ bool AProjectCKCharacter::IsDead_Implementation()
 
 bool AProjectCKCharacter::IsAttacking_Implementation()
 {
-	return false;
+	return CheckCurrentState(EPlayerStates::ATTACKING);
 }
 
 bool AProjectCKCharacter::ReserveAttackToken_Implementation(int Amount)
@@ -92,10 +96,18 @@ void AProjectCKCharacter::ReturnAttackToken_Implementation(int Amount)
 	DamageSystemComponent->ReturnAttackToken(Amount);
 }
 
+void AProjectCKCharacter::SetState(EPlayerStates NewState)
+{
+	if (CurrentState == NewState)
+		return;
+	CurrentState = NewState;
+}
+
 void AProjectCKCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Input
 	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
@@ -103,7 +115,8 @@ void AProjectCKCharacter::BeginPlay()
 			Subsystem->AddMappingContext(DefaultMappingContext, 0);
 		}
 	}
-
+	
+	// HUD
 	if (HUDClass)
 	{
 		HUD = Cast<UUserWidget>(CreateWidget(GetWorld(), HUDClass));
@@ -111,7 +124,6 @@ void AProjectCKCharacter::BeginPlay()
 			HUD->AddToViewport();
 	}
 }
-
 
 void AProjectCKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
@@ -122,11 +134,11 @@ void AProjectCKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AProjectCKCharacter::Move);
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AProjectCKCharacter::Look);
 		
-		EnhancedInputComponent->BindAction(WeakAttackAction, ETriggerEvent::Started, this, &AProjectCKCharacter::WeakAttack);
+		EnhancedInputComponent->BindAction(LeftAttackAction, ETriggerEvent::Started, this, &AProjectCKCharacter::LeftAttack);
 	}
 	else
 	{
-		UE_LOG(LogTemplateCharacter, Error, TEXT("'%s' Failed to find an Enhanced Input component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetNameSafe(this));
+		UE_LOG(LogTemplateCharacter, Error, TEXT("Error In PlayerSetupPlayerInputComponent"));
 	}
 }
 
@@ -159,12 +171,81 @@ void AProjectCKCharacter::Look(const FInputActionValue& Value)
 	}
 }
 
-void AProjectCKCharacter::WeakAttack(const struct FInputActionValue& Value)
+void AProjectCKCharacter::LeftAttack(const FInputActionValue& Value)
 {
-	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
-	if (AnimInstance)
+	if (CheckCurrentState(EPlayerStates::ATTACKING) || LeftAttackMontages.Num() == 0)
+		return;
+
+	SetState(EPlayerStates::ATTACKING);
+	SetAttackTarget();
+	if (TargetActor && FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) > 500)
 	{
-		AnimInstance->Montage_Play(WeakAttackMontage, 2.0f);
+		FMotionWarpingTarget Target = {};
+		Target.Name = FName("AttackTarget");
+		Target.Location = TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal() * 100;
+		Target.Rotation = UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor->GetActorLocation());
+		MotionWarpingComponent->AddOrUpdateWarpTarget(Target);
+		PlayAnimMontage(MotionWarpingMontage);
+		AttackIndex = 0;
+		//SetActorLocation(TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal() * 100);
+		//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, (TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).Normalize() * 100).ToString());
+	}
+	else
+	{
+		PlayAnimMontage(LeftAttackMontages[AttackIndex]);
+		AttackIndex++;
+		if (AttackIndex >= LeftAttackMontages.Num())
+			AttackIndex = 0;
 	}
 }
 
+void AProjectCKCharacter::StartWeaponCollision()
+{
+	AlreadyHitActors.Empty();
+}
+
+void AProjectCKCharacter::TickWeaponCollision()
+{
+	FCollisionShape Sphere = FCollisionShape::MakeSphere(20.0f);
+	TArray<FHitResult> OutResults;
+}
+
+void AProjectCKCharacter::EndWeaponCollision()
+{
+	SetState(EPlayerStates::NONE);
+}
+
+void AProjectCKCharacter::SetAttackTarget()
+{
+	// First Draw A Sphere Infront of Player
+	FVector StartPos = GetActorLocation() + GetActorForwardVector() * 100;
+	
+	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+	TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+	ObjectTypes.Add(Pawn);
+
+	TArray<AActor*> IgnoreActors;
+	IgnoreActors.Add(GetOwner());
+
+	FHitResult HitResult;
+
+	//bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, StartPos, 50.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::None, HitResult, true);
+
+	//if (Result)
+	//{
+	//	TargetActor = HitResult.GetActor();
+	//}
+	//else
+	//{
+		// Draw Sphere by Input
+		FVector LastInputVector = GetCharacterMovement()->GetLastInputVector();
+		StartPos = GetActorLocation() + LastInputVector * 100;
+		FVector EndPos = StartPos + LastInputVector * 500;
+		bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, EndPos, 100.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::None, HitResult, true, FLinearColor::Black);
+
+		if (Result)
+		{
+			TargetActor = HitResult.GetActor();
+		}
+	//}
+}
