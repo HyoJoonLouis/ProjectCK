@@ -34,7 +34,7 @@ public:
 	FORCEINLINE virtual float GetCurrentHealth_Implementation() override;
 	FORCEINLINE virtual float GetMaxHealth_Implementation() override;
 	virtual void Heal_Implementation(float Amount) override;
-	virtual bool TakeDamage_Implementation(FDamageInfo DamageInfo) override;
+	virtual bool TakeDamage_Implementation(AActor* CauseActor, FDamageInfo DamageInfo) override;
 	FORCEINLINE virtual bool IsDead_Implementation() override;
 	FORCEINLINE virtual bool IsAttacking_Implementation() override;
 

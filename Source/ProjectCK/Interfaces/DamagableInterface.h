@@ -28,7 +28,7 @@ public:
 	void Heal(float Amount);
 
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
-	bool TakeDamage(FDamageInfo DamageInfo);
+	bool TakeDamage(AActor* CauseActor, FDamageInfo DamageInfo);
 
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
 	bool IsDead();

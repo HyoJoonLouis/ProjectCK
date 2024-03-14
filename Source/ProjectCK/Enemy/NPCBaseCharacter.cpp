@@ -5,6 +5,7 @@
 #include "../Structs/DamageInfo.h"
 #include "../Structs/EnumTypes.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Kismet/KismetMathLibrary.h"
 
 
 ANPCBaseCharacter::ANPCBaseCharacter()
@@ -88,8 +89,10 @@ void ANPCBaseCharacter::Heal_Implementation(float Amount)
 	DamageSystemComponent->Heal(Amount);
 }
 
-bool ANPCBaseCharacter::TakeDamage_Implementation(FDamageInfo DamageInfo)
+bool ANPCBaseCharacter::TakeDamage_Implementation(AActor* CauseActor, FDamageInfo DamageInfo)
 {
+	if(CauseActor)
+		SetActorRotation(UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), CauseActor->GetActorLocation()));
 	GetMesh()->GetAnimInstance()->Montage_Play(TakeDamageMontage, 2.0f);
 	return DamageSystemComponent->TakeDamage(DamageInfo);
 }

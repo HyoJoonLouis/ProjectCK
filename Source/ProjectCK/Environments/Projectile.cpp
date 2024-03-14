@@ -20,6 +20,8 @@ AProjectile::AProjectile()
 	ProjectileMovementComponent = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovementComponent"));
 	ProjectileMovementComponent->InitialSpeed = 4500.0f;
 	ProjectileMovementComponent->bRotationFollowsVelocity = true;
+
+	Damage.DamageType = EDamageType::PROJECTILE;
 }
 
 void AProjectile::BeginPlay()
@@ -43,7 +45,7 @@ void AProjectile::BeginOverlap(UPrimitiveComponent* OverlappedComp, AActor* Othe
 	auto HitActor = Cast<IDamagableInterface>(OtherActor);
 	if (HitActor)
 	{
-		HitActor->Execute_TakeDamage(OtherActor, Damage);
+		HitActor->Execute_TakeDamage(OtherActor, this, Damage);
 	}
 }
 

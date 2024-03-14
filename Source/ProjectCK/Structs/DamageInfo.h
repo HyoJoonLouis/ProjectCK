@@ -38,9 +38,6 @@ public:
 	bool ShouldDamageInvincible;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	bool CanParry;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool CanDodge;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
