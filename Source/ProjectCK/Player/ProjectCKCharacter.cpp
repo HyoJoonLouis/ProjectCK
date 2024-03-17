@@ -14,6 +14,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "MotionWarpingComponent.h"
+#include "NiagaraComponent.h"
 
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
@@ -52,6 +53,7 @@ AProjectCKCharacter::AProjectCKCharacter()
 
 	DamageSystemComponent = CreateDefaultSubobject<UDamageSystemComponent>(TEXT("DamageSystem"));
 	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarping"));
+	NiagaraComponent = CreateDefaultSubobject<UNiagaraComponent>(TEXT("Niagara"));
 }
 
 // DamagableInterface
@@ -83,7 +85,7 @@ bool AProjectCKCharacter::IsDead_Implementation()
 
 bool AProjectCKCharacter::IsAttacking_Implementation()
 {
-	return CheckCurrentState(EPlayerStates::ATTACKING);
+	return isAttacking;
 }
 
 bool AProjectCKCharacter::ReserveAttackToken_Implementation(int Amount)
@@ -96,7 +98,7 @@ void AProjectCKCharacter::ReturnAttackToken_Implementation(int Amount)
 	DamageSystemComponent->ReturnAttackToken(Amount);
 }
 
-void AProjectCKCharacter::SetState(EPlayerStates NewState)
+void AProjectCKCharacter::ChangeState(EPlayerStates NewState)
 {
 	if (CurrentState == NewState)
 		return;
@@ -125,16 +127,101 @@ void AProjectCKCharacter::BeginPlay()
 	}
 }
 
+void AProjectCKCharacter::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	// Change To FSM Later
+	if (isRightAttacking)
+	{
+		APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+		FVector StartPos = CameraManager->GetCameraLocation();
+		FVector EndPos =  StartPos + CameraManager->GetActorForwardVector() * 2000;
+		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+		ObjectTypes.Add(Pawn);
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Add(GetOwner());
+		FHitResult HitResult;
+
+		bool Result = UKismetSystemLibrary::LineTraceSingleForObjects(this, StartPos, EndPos, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForDuration, HitResult, true);
+		if (Result)
+		{
+			ChangeAttackTarget(HitResult.GetActor());
+		}
+		return;
+	}
+	
+	if (CheckCurrentState(EPlayerStates::PASSIVE))
+	{
+		FVector StartPos = GetActorLocation();
+		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+		ObjectTypes.Add(Pawn);
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Add(GetOwner());
+		FHitResult HitResult;
+
+		bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, StartPos, 500.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForOneFrame, HitResult, true);
+
+		if (Result)
+		{
+			ChangeState(EPlayerStates::ATTACKING);
+		}
+	}
+
+
+	if (CheckCurrentState(EPlayerStates::ATTACKING))
+	{
+		if (TargetActor && FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) > 800)
+		{
+			ChangeAttackTarget(NULL);
+			ChangeState(EPlayerStates::PASSIVE);
+			return;
+		}	
+
+		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+		ObjectTypes.Add(Pawn);
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Add(GetOwner());
+		FHitResult HitResult;
+
+		FVector LastInputVector = GetCharacterMovement()->GetLastInputVector();
+		if (LastInputVector.IsNearlyZero())
+		{
+			APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+			LastInputVector = CameraManager->GetActorForwardVector();
+		}
+		FVector StartPos = GetActorLocation() + LastInputVector * 150;
+		FVector EndPos = StartPos + LastInputVector * 500;
+		bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, EndPos, 150.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForOneFrame, HitResult, true, FLinearColor::Black);
+
+		if (Result)
+		{
+			auto HitActor = Cast<IDamagableInterface>(HitResult.GetActor());
+			if (HitActor)
+			{
+				ChangeAttackTarget(HitResult.GetActor());
+			}
+		}
+	}
+}
+
 void AProjectCKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent)) {
 		
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+		//EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
+		//EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AProjectCKCharacter::Move);
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AProjectCKCharacter::Look);
 		
 		EnhancedInputComponent->BindAction(LeftAttackAction, ETriggerEvent::Started, this, &AProjectCKCharacter::LeftAttack);
+	
+		EnhancedInputComponent->BindAction(RightAttackAction, ETriggerEvent::Started, this, &AProjectCKCharacter::RightAttackStart);
+		EnhancedInputComponent->BindAction(RightAttackAction, ETriggerEvent::Completed, this, &AProjectCKCharacter::RightAttackEnd);
+
 	}
 	else
 	{
@@ -173,12 +260,23 @@ void AProjectCKCharacter::Look(const FInputActionValue& Value)
 
 void AProjectCKCharacter::LeftAttack(const FInputActionValue& Value)
 {
-	if (CheckCurrentState(EPlayerStates::ATTACKING) || LeftAttackMontages.Num() == 0)
+	if (isAttacking)
 		return;
+	if(LeftAttackMontages.Num() == 0)
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("No Attack Montages!"));
+	if (!CheckCurrentState(EPlayerStates::ATTACKING))
+		ChangeState(EPlayerStates::ATTACKING);
 
-	SetState(EPlayerStates::ATTACKING);
-	SetAttackTarget();
-	if (TargetActor && FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) > 500)
+	if (isRightAttacking)
+	{
+		RightAttackEnd(NULL);
+		if (TargetActor)
+			SetActorLocation(TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal() * 100);
+		return;
+	}
+
+	// If Target Actor is faraway
+	if (TargetActor && FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) > 300)
 	{
 		FMotionWarpingTarget Target = {};
 		Target.Name = FName("AttackTarget");
@@ -192,6 +290,22 @@ void AProjectCKCharacter::LeftAttack(const FInputActionValue& Value)
 	}
 	else
 	{
+		if (!TargetActor)
+			return;
+
+		// if Target Actor is Near so that RootMotion is Not need
+		if (FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) < 150)
+		{
+			LeftAttackMontages[AttackIndex]->EnableRootMotionSettingFromMontage(false, ERootMotionRootLock::RefPose);
+		}
+		else
+		{
+			LeftAttackMontages[AttackIndex]->EnableRootMotionSettingFromMontage(true, ERootMotionRootLock::RefPose);
+		}
+		// Change It to Lerp or something else 
+		// Should Use Motion Lerp?
+		SetActorRotation(UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor->GetActorLocation()));
+
 		PlayAnimMontage(LeftAttackMontages[AttackIndex]);
 		AttackIndex++;
 		if (AttackIndex >= LeftAttackMontages.Num())
@@ -199,8 +313,28 @@ void AProjectCKCharacter::LeftAttack(const FInputActionValue& Value)
 	}
 }
 
+void AProjectCKCharacter::RightAttackStart(const FInputActionValue& Value)
+{
+	isRightAttacking = true;
+	ChangeToContollerDesiredRotation();
+	UGameplayStatics::SetGlobalTimeDilation(GetWorld(), RightAttackTimeDelataion);
+	APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+	SetActorRotation(CameraManager->GetActorForwardVector().Rotation());
+	CameraManager->SetFOV(RightAttackFOV);
+}
+
+void AProjectCKCharacter::RightAttackEnd(const FInputActionValue& Value)
+{
+	isRightAttacking = false;
+	ChangeToRotationToMovement();
+	UGameplayStatics::SetGlobalTimeDilation(GetWorld(), 1);
+	APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+	CameraManager->SetFOV(78);
+}
+
 void AProjectCKCharacter::StartWeaponCollision()
 {
+	isAttacking = true;
 	AlreadyHitActors.Empty();
 }
 
@@ -212,40 +346,27 @@ void AProjectCKCharacter::TickWeaponCollision()
 
 void AProjectCKCharacter::EndWeaponCollision()
 {
-	SetState(EPlayerStates::NONE);
+	isAttacking = false;
 }
 
-void AProjectCKCharacter::SetAttackTarget()
+void AProjectCKCharacter::ChangeAttackTarget(AActor* NewTargetActor)
 {
-	// First Draw A Sphere Infront of Player
-	FVector StartPos = GetActorLocation() + GetActorForwardVector() * 100;
-	
-	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
-	TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
-	ObjectTypes.Add(Pawn);
+	auto NewTargetActorInterface = Cast<IDamagableInterface>(NewTargetActor);
+	if(TargetActor)
+		Cast<IDamagableInterface>(TargetActor)->Execute_UnsetAttackTarget(TargetActor);
+	TargetActor = NewTargetActor;
+	if(NewTargetActorInterface)
+		NewTargetActorInterface->Execute_SetAttackTarget(NewTargetActor);
+}
 
-	TArray<AActor*> IgnoreActors;
-	IgnoreActors.Add(GetOwner());
+void AProjectCKCharacter::ChangeToContollerDesiredRotation()
+{
+	GetCharacterMovement()->bUseControllerDesiredRotation = true;
+	GetCharacterMovement()->bOrientRotationToMovement = false;
+}
 
-	FHitResult HitResult;
-
-	//bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, StartPos, 50.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::None, HitResult, true);
-
-	//if (Result)
-	//{
-	//	TargetActor = HitResult.GetActor();
-	//}
-	//else
-	//{
-		// Draw Sphere by Input
-		FVector LastInputVector = GetCharacterMovement()->GetLastInputVector();
-		StartPos = GetActorLocation() + LastInputVector * 100;
-		FVector EndPos = StartPos + LastInputVector * 500;
-		bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, EndPos, 100.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::None, HitResult, true, FLinearColor::Black);
-
-		if (Result)
-		{
-			TargetActor = HitResult.GetActor();
-		}
-	//}
+void AProjectCKCharacter::ChangeToRotationToMovement()
+{
+	GetCharacterMovement()->bUseControllerDesiredRotation = false;
+	GetCharacterMovement()->bOrientRotationToMovement = true;
 }

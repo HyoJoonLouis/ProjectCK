@@ -33,6 +33,8 @@ public:
 	//IDamagableInterface
 	FORCEINLINE virtual float GetCurrentHealth_Implementation() override;
 	FORCEINLINE virtual float GetMaxHealth_Implementation() override;
+	virtual void SetAttackTarget_Implementation() override;
+	virtual void UnsetAttackTarget_Implementation() override;
 	virtual void Heal_Implementation(float Amount) override;
 	virtual bool TakeDamage_Implementation(AActor* CauseActor, FDamageInfo DamageInfo) override;
 	FORCEINLINE virtual bool IsDead_Implementation() override;
@@ -53,6 +55,10 @@ private:
 	class APatrolSpline* PatrolSpline;
 	UPROPERTY(EditAnywhere, Category = Damage)
 	class UDamageSystemComponent* DamageSystemComponent;
+
+	// AttackTarget
+	UPROPERTY(EditAnywhere, Category = Attack)
+	UMaterialInstance* OverlayMaterialInstance;
 	
 	// Attack
 	UPROPERTY(EditAnywhere, Category = AI)
