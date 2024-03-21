@@ -4,17 +4,19 @@
 #include "Kismet/GameplayStatics.h"
 #include "Engine/LocalPlayer.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "InputActionValue.h"
+#include "Engine/SkeletalMeshSocket.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Blueprint/UserWidget.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "MotionWarpingComponent.h"
-#include "NiagaraComponent.h"
+
 
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
@@ -37,6 +39,11 @@ AProjectCKCharacter::AProjectCKCharacter()
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 	GetCharacterMovement()->BrakingDecelerationFalling = 1500.0f;
 
+	Weapon = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Weapon"));
+	Weapon->SetupAttachment(GetMesh(), FName("WeaponSocket"));
+	Weapon->SetCollisionProfileName(FName("NoCollision"), true);
+
+
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
 	CameraBoom->TargetArmLength = 400.0f;
@@ -53,7 +60,6 @@ AProjectCKCharacter::AProjectCKCharacter()
 
 	DamageSystemComponent = CreateDefaultSubobject<UDamageSystemComponent>(TEXT("DamageSystem"));
 	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarping"));
-	NiagaraComponent = CreateDefaultSubobject<UNiagaraComponent>(TEXT("Niagara"));
 }
 
 // DamagableInterface
@@ -85,7 +91,7 @@ bool AProjectCKCharacter::IsDead_Implementation()
 
 bool AProjectCKCharacter::IsAttacking_Implementation()
 {
-	return isAttacking;
+	return CheckCurrentState({EPlayerStates::ATTACKING});
 }
 
 bool AProjectCKCharacter::ReserveAttackToken_Implementation(int Amount)
@@ -131,81 +137,108 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Change To FSM Later
-	if (isRightAttacking)
+	if (bActivateCollision)
 	{
-		APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
-		FVector StartPos = CameraManager->GetCameraLocation();
-		FVector EndPos =  StartPos + CameraManager->GetActorForwardVector() * 2000;
 		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
 		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
 		ObjectTypes.Add(Pawn);
 		TArray<AActor*> IgnoreActors;
 		IgnoreActors.Add(GetOwner());
-		FHitResult HitResult;
-
-		bool Result = UKismetSystemLibrary::LineTraceSingleForObjects(this, StartPos, EndPos, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForDuration, HitResult, true);
+		TArray<FHitResult> HitResults;
+		bool Result = UKismetSystemLibrary::SphereTraceMultiForObjects(this, Weapon->GetSocketLocation(FName("Start")), Weapon->GetSocketLocation(FName("End")), 30.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForDuration, HitResults, true);
+		
 		if (Result)
 		{
-			ChangeAttackTarget(HitResult.GetActor());
-		}
-		return;
-	}
-	
-	if (CheckCurrentState(EPlayerStates::PASSIVE))
-	{
-		FVector StartPos = GetActorLocation();
-		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
-		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
-		ObjectTypes.Add(Pawn);
-		TArray<AActor*> IgnoreActors;
-		IgnoreActors.Add(GetOwner());
-		FHitResult HitResult;
-
-		bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, StartPos, 500.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForOneFrame, HitResult, true);
-
-		if (Result)
-		{
-			ChangeState(EPlayerStates::ATTACKING);
-		}
-	}
-
-
-	if (CheckCurrentState(EPlayerStates::ATTACKING))
-	{
-		if (TargetActor && FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) > 800)
-		{
-			ChangeAttackTarget(NULL);
-			ChangeState(EPlayerStates::PASSIVE);
-			return;
-		}	
-
-		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
-		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
-		ObjectTypes.Add(Pawn);
-		TArray<AActor*> IgnoreActors;
-		IgnoreActors.Add(GetOwner());
-		FHitResult HitResult;
-
-		FVector LastInputVector = GetCharacterMovement()->GetLastInputVector();
-		if (LastInputVector.IsNearlyZero())
-		{
-			APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
-			LastInputVector = CameraManager->GetActorForwardVector();
-		}
-		FVector StartPos = GetActorLocation() + LastInputVector * 150;
-		FVector EndPos = StartPos + LastInputVector * 500;
-		bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, EndPos, 150.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForOneFrame, HitResult, true, FLinearColor::Black);
-
-		if (Result)
-		{
-			auto HitActor = Cast<IDamagableInterface>(HitResult.GetActor());
-			if (HitActor)
+			for (const auto HitResult : HitResults)
 			{
-				ChangeAttackTarget(HitResult.GetActor());
+				if (AlreadyHitActors.Contains(HitResult.GetActor()))
+					continue;
+
+				AlreadyHitActors.AddUnique(HitResult.GetActor());
+				auto HitDamageInterface = Cast<IDamagableInterface>(HitResult.GetActor());
+				if (HitDamageInterface)
+				{
+					HitDamageInterface->Execute_TakeDamage(HitResult.GetActor(), this, CurrentDamageInfo);
+				}
 			}
 		}
+
 	}
+	//// Change To FSM Later
+	//if (isRightAttacking)
+	//{
+	//	APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+	//	FVector StartPos = CameraManager->GetCameraLocation();
+	//	FVector EndPos = StartPos + CameraManager->GetActorForwardVector() * 2000;
+	//	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+	//	TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+	//	ObjectTypes.Add(Pawn);
+	//	TArray<AActor*> IgnoreActors;
+	//	IgnoreActors.Add(GetOwner());
+	//	FHitResult HitResult;
+
+	//	bool Result = UKismetSystemLibrary::LineTraceSingleForObjects(this, StartPos, EndPos, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForDuration, HitResult, true);
+	//	if (Result)
+	//	{
+	//		ChangeAttackTarget(HitResult.GetActor());
+	//	}
+	//	return;
+	//}
+
+	//if (CheckCurrentState({ EPlayerStates::PASSIVE }))
+	//{
+	//	FVector StartPos = GetActorLocation();
+	//	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+	//	TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+	//	ObjectTypes.Add(Pawn);
+	//	TArray<AActor*> IgnoreActors;
+	//	IgnoreActors.Add(GetOwner());
+	//	FHitResult HitResult;
+
+	//	bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, StartPos, 500.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForOneFrame, HitResult, true);
+
+	//	if (Result)
+	//	{
+	//		ChangeState(EPlayerStates::ATTACKING);
+	//	}
+	//}
+
+
+	//if (CheckCurrentState({ EPlayerStates::ATTACKING }))
+	//{
+	//	if (TargetActor && FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) > 800)
+	//	{
+	//		ChangeAttackTarget(NULL);
+	//		ChangeState(EPlayerStates::PASSIVE);
+	//		return;
+	//	}	
+
+	//	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+	//	TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+	//	ObjectTypes.Add(Pawn);
+	//	TArray<AActor*> IgnoreActors;
+	//	IgnoreActors.Add(GetOwner());
+	//	FHitResult HitResult;
+
+	//	FVector LastInputVector = GetCharacterMovement()->GetLastInputVector();
+	//	if (LastInputVector.IsNearlyZero())
+	//	{
+	//		APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+	//		LastInputVector = CameraManager->GetActorForwardVector();
+	//	}
+	//	FVector StartPos = GetActorLocation() + LastInputVector * 150;
+	//	FVector EndPos = StartPos + LastInputVector * 500;
+	//	bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, EndPos, 150.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForOneFrame, HitResult, true, FLinearColor::Black);
+
+	//	if (Result)
+	//	{
+	//		auto HitActor = Cast<IDamagableInterface>(HitResult.GetActor());
+	//		if (HitActor)
+	//		{
+	//			ChangeAttackTarget(HitResult.GetActor());
+	//		}
+	//	}
+	//}
 }
 
 void AProjectCKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -217,10 +250,11 @@ void AProjectCKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AProjectCKCharacter::Move);
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AProjectCKCharacter::Look);
 		
-		EnhancedInputComponent->BindAction(LeftAttackAction, ETriggerEvent::Started, this, &AProjectCKCharacter::LeftAttack);
+		EnhancedInputComponent->BindAction(LeftAttackAction, ETriggerEvent::Started, this, &AProjectCKCharacter::LeftMouse);
 	
-		EnhancedInputComponent->BindAction(RightAttackAction, ETriggerEvent::Started, this, &AProjectCKCharacter::RightAttackStart);
-		EnhancedInputComponent->BindAction(RightAttackAction, ETriggerEvent::Completed, this, &AProjectCKCharacter::RightAttackEnd);
+		EnhancedInputComponent->BindAction(RightAttackAction, ETriggerEvent::Started, this, &AProjectCKCharacter::RightMouse);
+		EnhancedInputComponent->BindAction(DodgeAction, ETriggerEvent::Started, this, &AProjectCKCharacter::Dodge);
+		//EnhancedInputComponent->BindAction(RightAttackAction, ETriggerEvent::Completed, this, &AProjectCKCharacter::RightAttackEnd);
 
 	}
 	else
@@ -258,95 +292,189 @@ void AProjectCKCharacter::Look(const FInputActionValue& Value)
 	}
 }
 
-void AProjectCKCharacter::LeftAttack(const FInputActionValue& Value)
+void AProjectCKCharacter::LeftMouse(const FInputActionValue& Value)
 {
-	if (isAttacking)
-		return;
-	if(LeftAttackMontages.Num() == 0)
-		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("No Attack Montages!"));
-	if (!CheckCurrentState(EPlayerStates::ATTACKING))
-		ChangeState(EPlayerStates::ATTACKING);
-
-	if (isRightAttacking)
+	bSaveDodge = false;
+	if (CheckCurrentState({ EPlayerStates::ATTACKING, EPlayerStates::DODGE }))
 	{
-		RightAttackEnd(NULL);
-		if (TargetActor)
-			SetActorLocation(TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal() * 100);
-		return;
-	}
-
-	// If Target Actor is faraway
-	if (TargetActor && FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) > 300)
-	{
-		FMotionWarpingTarget Target = {};
-		Target.Name = FName("AttackTarget");
-		Target.Location = TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal() * 100;
-		Target.Rotation = UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor->GetActorLocation());
-		MotionWarpingComponent->AddOrUpdateWarpTarget(Target);
-		PlayAnimMontage(MotionWarpingMontage);
-		AttackIndex = 0;
-		//SetActorLocation(TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal() * 100);
-		//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, (TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).Normalize() * 100).ToString());
+		AttackInfo.AttackType = EAttackType::LEFT;
+		AttackInfo.AttackSaved = true;
 	}
 	else
 	{
-		if (!TargetActor)
-			return;
+		Attack(EAttackType::LEFT);
+	}
+	//if (isAttacking)
+	//	return;
+	//if(LeftAttackMontages.Num() == 0)
+	//	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("No Attack Montages!"));
+	//if (!CheckCurrentState({ EPlayerStates::ATTACKING }))
+	//	ChangeState(EPlayerStates::ATTACKING);
 
-		// if Target Actor is Near so that RootMotion is Not need
-		if (FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) < 150)
-		{
-			LeftAttackMontages[AttackIndex]->EnableRootMotionSettingFromMontage(false, ERootMotionRootLock::RefPose);
-		}
-		else
-		{
-			LeftAttackMontages[AttackIndex]->EnableRootMotionSettingFromMontage(true, ERootMotionRootLock::RefPose);
-		}
-		// Change It to Lerp or something else 
-		// Should Use Motion Lerp?
-		SetActorRotation(UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor->GetActorLocation()));
+	//if (isRightAttacking)
+	//{
+	//	RightAttackEnd(NULL);
+	//	if (TargetActor)
+	//		SetActorLocation(TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal() * 100);
+	//	return;
+	//}
 
-		PlayAnimMontage(LeftAttackMontages[AttackIndex]);
-		AttackIndex++;
-		if (AttackIndex >= LeftAttackMontages.Num())
-			AttackIndex = 0;
+	//// If Target Actor is faraway
+	//if (TargetActor && FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) > 300)
+	//{
+	//	FMotionWarpingTarget Target = {};
+	//	Target.Name = FName("AttackTarget");
+	//	Target.Location = TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal() * 100;
+	//	Target.Rotation = UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor->GetActorLocation());
+	//	MotionWarpingComponent->AddOrUpdateWarpTarget(Target);
+	//	PlayAnimMontage(MotionWarpingMontage);
+	//	AttackIndex = 0;
+	//	//SetActorLocation(TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).GetSafeNormal() * 100);
+	//	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, (TargetActor->GetActorLocation() + (GetActorLocation() - TargetActor->GetActorLocation()).Normalize() * 100).ToString());
+	//}
+	//else
+	//{
+	//	if (!TargetActor)
+	//		return;
+
+	//	// if Target Actor is Near so that RootMotion is Not need
+	//	if (FVector::Distance(TargetActor->GetActorLocation(), GetActorLocation()) < 150)
+	//	{
+	//		LeftAttackMontages[AttackIndex]->EnableRootMotionSettingFromMontage(false, ERootMotionRootLock::RefPose);
+	//	}
+	//	else
+	//	{
+	//		LeftAttackMontages[AttackIndex]->EnableRootMotionSettingFromMontage(true, ERootMotionRootLock::RefPose);
+	//	}
+	//	// Change It to Lerp or something else 
+	//	// Should Use Motion Lerp?
+	//	SetActorRotation(UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor->GetActorLocation()));
+
+	//	PlayAnimMontage(LeftAttackMontages[AttackIndex]);
+	//	AttackIndex++;
+	//	if (AttackIndex >= LeftAttackMontages.Num())
+	//		AttackIndex = 0;
+	//}
+}
+
+void AProjectCKCharacter::RightMouse(const FInputActionValue& Value)
+{
+	bSaveDodge = false;
+	if (CheckCurrentState({ EPlayerStates::ATTACKING, EPlayerStates::DODGE }))
+	{
+		AttackInfo.AttackType = EAttackType::RIGHT;
+		AttackInfo.AttackSaved = true;
+	}
+	else
+	{
+		Attack(EAttackType::RIGHT);
 	}
 }
 
-void AProjectCKCharacter::RightAttackStart(const FInputActionValue& Value)
+void AProjectCKCharacter::Dodge(const FInputActionValue& Value)
 {
-	isRightAttacking = true;
-	ChangeToContollerDesiredRotation();
-	UGameplayStatics::SetGlobalTimeDilation(GetWorld(), RightAttackTimeDelataion);
-	APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
-	SetActorRotation(CameraManager->GetActorForwardVector().Rotation());
-	CameraManager->SetFOV(RightAttackFOV);
+	if (CheckCurrentState({ EPlayerStates::DODGE }))
+	{
+		bSaveDodge = true;
+	}
+	else
+	{
+		PerformDodge();
+	}
 }
 
-void AProjectCKCharacter::RightAttackEnd(const FInputActionValue& Value)
+void AProjectCKCharacter::Attack(EAttackType AttackType)
 {
-	isRightAttacking = false;
-	ChangeToRotationToMovement();
-	UGameplayStatics::SetGlobalTimeDilation(GetWorld(), 1);
-	APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
-	CameraManager->SetFOV(78);
+	if (CheckCurrentState({ EPlayerStates::ATTACKING }))
+		return;
+
+	if (AttackType == EAttackType::LEFT)
+		PerformLeftAttack(AttackIndex);
+	if (AttackType == EAttackType::RIGHT)
+		PerformRightAttack(AttackIndex);
+}
+
+void AProjectCKCharacter::PerformLeftAttack(int Index)
+{
+	ChangeState(EPlayerStates::ATTACKING);
+	PlayAnimMontage(LeftAttackMontages[Index]);
+	AttackIndex++;
+	if (AttackIndex >= LeftAttackMontages.Num())
+		AttackIndex = 0;
+}
+
+
+
+void AProjectCKCharacter::PerformRightAttack(int Index)
+{
+	ChangeState(EPlayerStates::ATTACKING);
+	PlayAnimMontage(RightAttackMontages[Index]);
+	AttackIndex++;
+	if (AttackIndex >= RightAttackMontages.Num())
+		AttackIndex = 0;
+}
+
+void AProjectCKCharacter::PerformDodge()
+{
+	ChangeState(EPlayerStates::DODGE);
+	PlayAnimMontage(DodgeMontage);
+}
+
+void AProjectCKCharacter::SaveAttack()
+{
+	if (AttackInfo.AttackSaved)
+	{
+		AttackInfo.AttackSaved = false;
+		if (CheckCurrentState({ EPlayerStates::ATTACKING }))
+		{
+			ChangeState(EPlayerStates::PASSIVE);
+			Attack(AttackInfo.AttackType);
+		}
+		else
+		{
+			Attack(AttackInfo.AttackType);
+		}
+	}
+}
+
+void AProjectCKCharacter::SaveDodge()
+{
+	if (bSaveDodge)
+	{
+		bSaveDodge = false;
+		if (CheckCurrentState({ EPlayerStates::DODGE }))
+		{
+			ChangeState(EPlayerStates::PASSIVE);
+			PerformDodge();
+		}
+		else
+		{
+			PerformDodge();
+		}
+	}
+}
+
+void AProjectCKCharacter::ResetState()
+{
+	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("Reset"));
+	ChangeState(EPlayerStates::PASSIVE);
+	AttackIndex = 0;
+	AttackInfo.AttackType = EAttackType::NONE;
+	AttackInfo.AttackSaved = false;
+	bSaveDodge = false;
 }
 
 void AProjectCKCharacter::StartWeaponCollision()
 {
-	isAttacking = true;
+	//isAttacking = true;
+	bActivateCollision = true;
 	AlreadyHitActors.Empty();
-}
-
-void AProjectCKCharacter::TickWeaponCollision()
-{
-	FCollisionShape Sphere = FCollisionShape::MakeSphere(20.0f);
-	TArray<FHitResult> OutResults;
 }
 
 void AProjectCKCharacter::EndWeaponCollision()
 {
-	isAttacking = false;
+	bActivateCollision = false;
+	//isAttacking = false;
 }
 
 void AProjectCKCharacter::ChangeAttackTarget(AActor* NewTargetActor)
