@@ -84,6 +84,19 @@ float ANPCBaseCharacter::GetMaxHealth_Implementation()
 	return DamageSystemComponent->MaxHealth;
 }
 
+void ANPCBaseCharacter::SetAttackTarget_Implementation()
+{
+	if (IsValid(OverlayMaterialInstance))
+	{
+		GetMesh()->SetOverlayMaterial(OverlayMaterialInstance);
+	}
+}
+
+void ANPCBaseCharacter::UnsetAttackTarget_Implementation()
+{
+	GetMesh()->SetOverlayMaterial(NULL);
+}
+
 void ANPCBaseCharacter::Heal_Implementation(float Amount)
 {
 	DamageSystemComponent->Heal(Amount);

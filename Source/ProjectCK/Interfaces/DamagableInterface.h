@@ -28,6 +28,12 @@ public:
 	void Heal(float Amount);
 
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
+	void SetAttackTarget();
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
+	void UnsetAttackTarget();
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
 	bool TakeDamage(AActor* CauseActor, FDamageInfo DamageInfo);
 
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent)
