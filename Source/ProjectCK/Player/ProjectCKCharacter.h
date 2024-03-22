@@ -4,6 +4,7 @@
 #include "GameFramework/Character.h"
 #include "Logging/LogMacros.h"
 #include "../Interfaces/DamagableInterface.h"
+#include <Components/TimelineComponent.h>
 #include "ProjectCKCharacter.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -45,20 +46,34 @@ protected:
 	class UInputAction* RightAttackAction;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	class UInputAction* DodgeAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	class UInputAction* TargetingAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	class UInputAction* SprintAction;
 
 	// FSM
 	EPlayerStates CurrentState;
+
+	// Movement
+	TMap<enum EMovementSpeed, float> MovementSpeed;
 
 	// Attack
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
 	int AttackIndex;
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
 	AActor* TargetActor;
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
+	AActor* SoftTarget;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Attack)
+	UCurveFloat* TargetRotateCurve;
+	FTimeline TargetRotateTimeline;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
 	FDamageInfo CurrentDamageInfo;
 	UPROPERTY(VisibleAnywhere, Category = Attack)
 	TArray<AActor*> AlreadyHitActors;
+	FTimerHandle HitStopTimer;
 
 	// Montages
 	UPROPERTY(EditAnywhere, Category = Attack)
@@ -72,15 +87,13 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, Category = Attack)
 	FAttackInfo AttackInfo;
-	UPROPERTY(VisibleAnywhere, Category = Attack)
+
 	bool bSaveDodge;
 	bool bActivateCollision;
 
 	// Components
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	class UDamageSystemComponent* DamageSystemComponent;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	class UMotionWarpingComponent* MotionWarpingComponent;
 
 	// UI
 	UPROPERTY(EditAnywhere)
@@ -122,6 +135,12 @@ protected:
 	void RightMouse(const struct FInputActionValue& Value);
 	UFUNCTION()
 	void Dodge(const struct FInputActionValue& Value);
+	UFUNCTION()
+	void Targeting(const struct FInputActionValue& Value);
+	UFUNCTION()
+	void Sprint(const struct FInputActionValue& Value);
+	UFUNCTION()
+	void StopSprint(const struct FInputActionValue& Value);
 	
 	// Attack
 	UFUNCTION(BlueprintCallable)
@@ -139,6 +158,12 @@ protected:
 	UFUNCTION(BlueprintCallable)
 	void SaveDodge();
 	
+	UFUNCTION(BlueprintCallable)
+	void SoftLock();
+	UFUNCTION(BlueprintCallable)
+	void RotateToTarget();
+	UFUNCTION()
+	void RotateToTargetTimelineFunction(float Value);
 
 	UFUNCTION(BlueprintCallable)
 	void ResetState();

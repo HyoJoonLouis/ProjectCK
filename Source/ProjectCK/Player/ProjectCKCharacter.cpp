@@ -1,6 +1,7 @@
 #include "ProjectCKCharacter.h"
 #include "../ProjectCKGameInstance.h"
 #include "../Components/DamageSystemComponent.h"
+#include "../Structs/EnumTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/LocalPlayer.h"
 #include "Components/CapsuleComponent.h"
@@ -58,8 +59,11 @@ AProjectCKCharacter::AProjectCKCharacter()
 	FollowCamera->bUsePawnControlRotation = false;
 	FollowCamera->FieldOfView = 78;
 
+	MovementSpeed.Add(EMovementSpeed::IDLE, 0);
+	MovementSpeed.Add(EMovementSpeed::WALKING, 600);
+	MovementSpeed.Add(EMovementSpeed::SPRINTING, 1200);
+
 	DamageSystemComponent = CreateDefaultSubobject<UDamageSystemComponent>(TEXT("DamageSystem"));
-	MotionWarpingComponent = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarping"));
 }
 
 // DamagableInterface
@@ -124,6 +128,16 @@ void AProjectCKCharacter::BeginPlay()
 		}
 	}
 	
+	// Timeline
+	if (TargetRotateCurve)
+	{
+		FOnTimelineFloat TargetRotateCurveCallback;
+		TargetRotateCurveCallback.BindUFunction(this, FName("RotateToTargetTimelineFunction"));
+
+		TargetRotateTimeline.AddInterpFloat(TargetRotateCurve, TargetRotateCurveCallback);
+		TargetRotateTimeline.SetTimelineLength(0.2f);
+	}
+
 	// HUD
 	if (HUDClass)
 	{
@@ -137,6 +151,11 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// Timeline
+	TargetRotateTimeline.TickTimeline(DeltaTime);
+
+	// Weapon Collision
+	// Better putting in C++ than in BP
 	if (bActivateCollision)
 	{
 		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
@@ -145,16 +164,25 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 		TArray<AActor*> IgnoreActors;
 		IgnoreActors.Add(GetOwner());
 		TArray<FHitResult> HitResults;
-		bool Result = UKismetSystemLibrary::SphereTraceMultiForObjects(this, Weapon->GetSocketLocation(FName("Start")), Weapon->GetSocketLocation(FName("End")), 30.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForDuration, HitResults, true);
-		
+		bool Result = UKismetSystemLibrary::SphereTraceMultiForObjects(this, Weapon->GetSocketLocation(FName("Start")), Weapon->GetSocketLocation(FName("End")), 30.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::None, HitResults, true);
+
 		if (Result)
 		{
-			for (const auto HitResult : HitResults)
+			for (const auto& HitResult : HitResults)
 			{
 				if (AlreadyHitActors.Contains(HitResult.GetActor()))
 					continue;
 
 				AlreadyHitActors.AddUnique(HitResult.GetActor());
+				
+				FTimerManager& TimerManager = GetWorld()->GetTimerManager();
+				if (TimerManager.IsTimerActive(HitStopTimer))
+					TimerManager.ClearTimer(HitStopTimer);
+				CustomTimeDilation = 0.2f;
+				TimerManager.SetTimer(HitStopTimer, [&]() {
+						CustomTimeDilation = 1.0f;
+					}, 0.08f, false);
+
 				auto HitDamageInterface = Cast<IDamagableInterface>(HitResult.GetActor());
 				if (HitDamageInterface)
 				{
@@ -164,6 +192,17 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 		}
 
 	}
+
+	// Face to Target
+	if (TargetActor && FVector::Distance(GetActorLocation(), TargetActor->GetActorLocation()) <= 500)
+	{
+		Controller->SetControlRotation(UKismetMathLibrary::RInterpTo(Controller->GetControlRotation(), UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor->GetActorLocation() - FVector(0, 0, 30)), DeltaTime, 5));
+	}
+	else
+	{
+		TargetActor = NULL;
+	}
+
 	//// Change To FSM Later
 	//if (isRightAttacking)
 	//{
@@ -256,6 +295,10 @@ void AProjectCKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 		EnhancedInputComponent->BindAction(DodgeAction, ETriggerEvent::Started, this, &AProjectCKCharacter::Dodge);
 		//EnhancedInputComponent->BindAction(RightAttackAction, ETriggerEvent::Completed, this, &AProjectCKCharacter::RightAttackEnd);
 
+		EnhancedInputComponent->BindAction(TargetingAction, ETriggerEvent::Started, this, &AProjectCKCharacter::Targeting);
+		
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &AProjectCKCharacter::Sprint);
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AProjectCKCharacter::StopSprint);
 	}
 	else
 	{
@@ -283,6 +326,9 @@ void AProjectCKCharacter::Move(const FInputActionValue& Value)
 
 void AProjectCKCharacter::Look(const FInputActionValue& Value)
 {
+	if (TargetActor)
+		return;
+
 	FVector2D LookAxisVector = Value.Get<FVector2D>();
 
 	if (Controller != nullptr)
@@ -303,6 +349,7 @@ void AProjectCKCharacter::LeftMouse(const FInputActionValue& Value)
 	else
 	{
 		Attack(EAttackType::LEFT);
+
 	}
 	//if (isAttacking)
 	//	return;
@@ -373,14 +420,44 @@ void AProjectCKCharacter::RightMouse(const FInputActionValue& Value)
 
 void AProjectCKCharacter::Dodge(const FInputActionValue& Value)
 {
-	if (CheckCurrentState({ EPlayerStates::DODGE }))
-	{
-		bSaveDodge = true;
-	}
-	else
+	if (!CheckCurrentState({ EPlayerStates::DODGE }) && !GetCharacterMovement()->IsFalling())
 	{
 		PerformDodge();
 	}
+	else
+	{
+		bSaveDodge = true;
+	}
+}
+
+void AProjectCKCharacter::Targeting(const FInputActionValue& Value)
+{
+	if (!TargetActor)
+	{
+		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+		ObjectTypes.Add(Pawn);
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Add(GetOwner());
+		FHitResult HitResult;
+
+		APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+		bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, GetActorLocation(), GetActorLocation() + CameraManager->GetActorForwardVector() * 500, 100, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForDuration, HitResult, true);
+		if (Result)
+		{
+			TargetActor = HitResult.GetActor();
+		}
+	}
+}
+
+void AProjectCKCharacter::Sprint(const FInputActionValue& Value)
+{
+	GetCharacterMovement()->MaxWalkSpeed = MovementSpeed[EMovementSpeed::SPRINTING];
+}
+
+void AProjectCKCharacter::StopSprint(const FInputActionValue& Value)
+{ 
+	GetCharacterMovement()->MaxWalkSpeed = MovementSpeed[EMovementSpeed::WALKING];
 }
 
 void AProjectCKCharacter::Attack(EAttackType AttackType)
@@ -390,24 +467,24 @@ void AProjectCKCharacter::Attack(EAttackType AttackType)
 
 	if (AttackType == EAttackType::LEFT)
 		PerformLeftAttack(AttackIndex);
-	if (AttackType == EAttackType::RIGHT)
+	else if (AttackType == EAttackType::RIGHT)
 		PerformRightAttack(AttackIndex);
 }
 
 void AProjectCKCharacter::PerformLeftAttack(int Index)
 {
 	ChangeState(EPlayerStates::ATTACKING);
+	SoftLock();
 	PlayAnimMontage(LeftAttackMontages[Index]);
 	AttackIndex++;
 	if (AttackIndex >= LeftAttackMontages.Num())
 		AttackIndex = 0;
 }
 
-
-
 void AProjectCKCharacter::PerformRightAttack(int Index)
 {
 	ChangeState(EPlayerStates::ATTACKING);
+	SoftLock(); 
 	PlayAnimMontage(RightAttackMontages[Index]);
 	AttackIndex++;
 	if (AttackIndex >= RightAttackMontages.Num())
@@ -416,6 +493,8 @@ void AProjectCKCharacter::PerformRightAttack(int Index)
 
 void AProjectCKCharacter::PerformDodge()
 {
+	TargetRotateTimeline.Stop();
+	SoftTarget = NULL;
 	ChangeState(EPlayerStates::DODGE);
 	PlayAnimMontage(DodgeMontage);
 }
@@ -454,19 +533,60 @@ void AProjectCKCharacter::SaveDodge()
 	}
 }
 
+void AProjectCKCharacter::SoftLock()
+{
+	if (TargetActor)
+	{
+		SoftTarget = NULL;
+	}
+	else
+	{
+		FVector StartPos = GetActorLocation();
+		FVector EndPos = StartPos + GetCharacterMovement()->GetLastInputVector() * 500;
+		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+		ObjectTypes.Add(Pawn);
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Add(GetOwner());
+		FHitResult HitResult;
+		
+		bool Result = UKismetSystemLibrary::SphereTraceSingleForObjects(this, StartPos, EndPos, 100, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::None, HitResult, true);
+		if (Result)
+		{
+			SoftTarget = HitResult.GetActor();
+		}
+	}
+}
+
+void AProjectCKCharacter::RotateToTarget()
+{
+	if (TargetActor || SoftTarget)
+	{
+		TargetRotateTimeline.PlayFromStart();
+	}
+}
+
+void AProjectCKCharacter::RotateToTargetTimelineFunction(float Value)
+{
+	FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor ? TargetActor->GetActorLocation() : SoftTarget->GetActorLocation());
+	FRotator TargetRotation = FRotator(GetActorRotation().Pitch, LookAtRotation.Yaw, LookAtRotation.Roll);
+	SetActorRotation(UKismetMathLibrary::RLerp(GetActorRotation(), TargetRotation, Value, false));
+}
+
 void AProjectCKCharacter::ResetState()
 {
-	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("Reset"));
 	ChangeState(EPlayerStates::PASSIVE);
 	AttackIndex = 0;
 	AttackInfo.AttackType = EAttackType::NONE;
 	AttackInfo.AttackSaved = false;
 	bSaveDodge = false;
+	TargetRotateTimeline.Stop();
+	SoftTarget = NULL;
+
 }
 
 void AProjectCKCharacter::StartWeaponCollision()
 {
-	//isAttacking = true;
 	bActivateCollision = true;
 	AlreadyHitActors.Empty();
 }
@@ -474,7 +594,6 @@ void AProjectCKCharacter::StartWeaponCollision()
 void AProjectCKCharacter::EndWeaponCollision()
 {
 	bActivateCollision = false;
-	//isAttacking = false;
 }
 
 void AProjectCKCharacter::ChangeAttackTarget(AActor* NewTargetActor)
