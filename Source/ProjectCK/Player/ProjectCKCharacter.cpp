@@ -10,6 +10,7 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "InputActionValue.h"
 #include "Engine/SkeletalMeshSocket.h"
 #include "EnhancedInputComponent.h"
@@ -84,10 +85,45 @@ void AProjectCKCharacter::Heal_Implementation(float Amount)
 
 bool AProjectCKCharacter::TakeDamage_Implementation(AActor* CauseActor, FDamageInfo DamageInfo)
 {
-	GetMesh()->GetAnimInstance()->Montage_Play(TakeDamageMontage, 2.0f);
+	if (DamageSystemComponent->IsInvincible)
+	{
+		FTimerManager& TimerManager = GetWorld()->GetTimerManager();
+		if (TimerManager.IsTimerActive(DodgeStopTimer))
+			TimerManager.ClearTimer(DodgeStopTimer);
+
+		// Sphere Trace Based
+		// Change Later
+		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+		ObjectTypes.Add(Pawn);
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Add(GetOwner());
+		TArray<FHitResult> HitResults;
+		bool Result = UKismetSystemLibrary::SphereTraceMultiForObjects(this, GetActorLocation(), GetActorLocation(), 1000.0f, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForDuration, HitResults, true);
+		if (Result)
+		{
+			for (const auto& HitResult : HitResults)
+			{
+				HitResult.GetActor()->CustomTimeDilation = 0.1f;
+				DilationActors.AddUnique(HitResult.GetActor());
+			}
+		}
+
+		TimerManager.SetTimer(DodgeStopTimer, [&]() {
+			for (const auto& DilationActor : DilationActors)
+			{
+				DilationActor->CustomTimeDilation = 1;
+			}
+			DilationActors.Empty();
+		}, 5.0f, false);
+	}
+	else 
+	{
+		GetMesh()->GetAnimInstance()->Montage_Play(TakeDamageMontage, 2.0f);
+	}
 	return DamageSystemComponent->TakeDamage(DamageInfo);
 }
-
+ 
 bool AProjectCKCharacter::IsDead_Implementation()
 {
 	return DamageSystemComponent->IsDead;
@@ -178,10 +214,10 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 				FTimerManager& TimerManager = GetWorld()->GetTimerManager();
 				if (TimerManager.IsTimerActive(HitStopTimer))
 					TimerManager.ClearTimer(HitStopTimer);
-				CustomTimeDilation = 0.2f;
+				CustomTimeDilation = 0;
 				TimerManager.SetTimer(HitStopTimer, [&]() {
-						CustomTimeDilation = 1.0f;
-					}, 0.08f, false);
+						CustomTimeDilation = 1;
+					}, 0.03f, false);
 
 				auto HitDamageInterface = Cast<IDamagableInterface>(HitResult.GetActor());
 				if (HitDamageInterface)
@@ -367,6 +403,7 @@ void AProjectCKCharacter::PerformDodge()
 	TargetRotateTimeline.Stop();
 	SoftTarget = NULL;
 	ChangeState(EPlayerStates::DODGE);
+	DamageSystemComponent->IsInvincible = true;
 	PlayAnimMontage(DodgeMontage);
 }
 
@@ -450,6 +487,7 @@ void AProjectCKCharacter::ResetState()
 	AttackIndex = 0;
 	AttackInfo.AttackType = EAttackType::NONE;
 	AttackInfo.AttackSaved = false;
+	DamageSystemComponent->IsInvincible = false;
 	bSaveDodge = false;
 	TargetRotateTimeline.Stop();
 	SoftTarget = NULL;

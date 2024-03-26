@@ -73,7 +73,11 @@ protected:
 	FDamageInfo CurrentDamageInfo;
 	UPROPERTY(VisibleAnywhere, Category = Attack)
 	TArray<AActor*> AlreadyHitActors;
+
+
+	TArray<AActor*> DilationActors;
 	FTimerHandle HitStopTimer;
+	FTimerHandle DodgeStopTimer;
 
 	// Montages
 	UPROPERTY(EditAnywhere, Category = Attack)

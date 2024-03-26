@@ -48,6 +48,10 @@ public:
 	UFUNCTION()
 	void OnAttackEnd(class UAnimMontage* AnimMontage, bool bInterrupted);
 
+	// OnDied
+	UFUNCTION()
+	void OnDied();
+
 private:
 	UPROPERTY(EditAnywhere, Category = AI)
 	class UBehaviorTree* BTAsset;

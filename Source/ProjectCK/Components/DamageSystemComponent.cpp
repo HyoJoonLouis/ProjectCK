@@ -41,7 +41,6 @@ bool UDamageSystemComponent::TakeDamage(FDamageInfo DamageInfo)
 		IsDead = true;
 		if (OnDead.IsBound())
 			OnDead.Broadcast();
-		GetOwner()->Destroy();
 	}
 	else
 	{
