@@ -4,6 +4,7 @@
 #include "GameFramework/Character.h"
 #include "Logging/LogMacros.h"
 #include "../Interfaces/DamagableInterface.h"
+#include <Components/TimelineComponent.h>
 #include "ProjectCKCharacter.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -12,14 +13,18 @@ UENUM(BlueprintType)
 enum class EPlayerStates : uint8
 {
 	PASSIVE		UMETA(DisplayName = "Passive"),
-	ATTACKING	UMETA(DisplayName = "Attacking")
+	ATTACKING	UMETA(DisplayName = "Attacking"),
+	DODGE		UMETA(DisplayName = "Dodge")
 };
+
 
 UCLASS(config=Game)
 class AProjectCKCharacter : public ACharacter, public IDamagableInterface
 {
 	GENERATED_BODY()
 protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Weapon)
+	class UStaticMeshComponent* Weapon;
 	// Camera
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	class USpringArmComponent* CameraBoom;
@@ -39,9 +44,18 @@ protected:
 	class UInputAction* LeftAttackAction;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	class UInputAction* RightAttackAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	class UInputAction* DodgeAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	class UInputAction* TargetingAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	class UInputAction* SprintAction;
 
 	// FSM
 	EPlayerStates CurrentState;
+
+	// Movement
+	TMap<enum EMovementSpeed, float> MovementSpeed;
 
 	// Attack
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
@@ -49,36 +63,43 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
 	AActor* TargetActor;
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
-	bool isAttacking;
+	AActor* SoftTarget;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Attack)
+	UCurveFloat* TargetRotateCurve;
+	FTimeline TargetRotateTimeline;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
 	FDamageInfo CurrentDamageInfo;
 	UPROPERTY(VisibleAnywhere, Category = Attack)
 	TArray<AActor*> AlreadyHitActors;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Camera)
+	TSubclassOf<class UCameraShakeBase> SmallCameraShake;
+
+	TArray<AActor*> DilationActors;
+	FTimerHandle HitStopTimer;
+	FTimerHandle DodgeStopTimer;
+
+	// Montages
 	UPROPERTY(EditAnywhere, Category = Attack)
 	TArray<UAnimMontage*> LeftAttackMontages;
 	UPROPERTY(EditAnywhere, Category = Attack)
+	TArray<UAnimMontage*> RightAttackMontages;
+	UPROPERTY(EditAnywhere, Category = Attack)
+	class UAnimMontage* DodgeMontage;
+	UPROPERTY(EditAnywhere, Category = Attack)
 	class UAnimMontage* TakeDamageMontage;
 
-	UPROPERTY(EditAnywhere, Category = Attack)
-	class UAnimMontage* MotionWarpingMontage;
+	UPROPERTY(VisibleAnywhere, Category = Attack)
+	FAttackInfo AttackInfo;
 
-
-	// RIght Attack Variables
-	bool isRightAttacking;
-	UPROPERTY(EditAnywhere, Category = RightAttack)
-	float RightAttackTimeDelataion;
-	UPROPERTY(EditAnywhere, Category = RightAttack)
-	float RightAttackFOV;
-
+	bool bSaveDodge;
+	bool bActivateCollision;
 
 	// Components
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	class UDamageSystemComponent* DamageSystemComponent;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	class UMotionWarpingComponent* MotionWarpingComponent;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	class UNiagaraComponent* NiagaraComponent;
 
 	// UI
 	UPROPERTY(EditAnywhere)
@@ -107,7 +128,7 @@ protected:
 	UFUNCTION(BlueprintCallable)
 	FORCEINLINE EPlayerStates GetState() const { return CurrentState; }
 	UFUNCTION(BlueprintCallable)
-	FORCEINLINE bool CheckCurrentState(EPlayerStates State) const {return CurrentState == State;};
+	FORCEINLINE bool CheckCurrentState(TArray<EPlayerStates> State) const {return State.Contains(CurrentState);};
 
 	// Action Functions
 	UFUNCTION()
@@ -115,17 +136,46 @@ protected:
 	UFUNCTION()
 	void Look(const struct FInputActionValue& Value);
 	UFUNCTION()
-	void LeftAttack(const struct FInputActionValue& Value);
+	void LeftMouse(const struct FInputActionValue& Value);
 	UFUNCTION()
-	void RightAttackStart(const struct FInputActionValue& Value);
+	void RightMouse(const struct FInputActionValue& Value);
 	UFUNCTION()
-	void RightAttackEnd(const struct FInputActionValue& Value);
-
+	void Dodge(const struct FInputActionValue& Value);
+	UFUNCTION()
+	void Targeting(const struct FInputActionValue& Value);
+	UFUNCTION()
+	void Sprint(const struct FInputActionValue& Value);
+	UFUNCTION()
+	void StopSprint(const struct FInputActionValue& Value);
+	
 	// Attack
 	UFUNCTION(BlueprintCallable)
-	void StartWeaponCollision();
+	void Attack(EAttackType AttackType);
+	
 	UFUNCTION(BlueprintCallable)
-	void TickWeaponCollision();
+	void PerformLeftAttack(int Index);
+	UFUNCTION(BlueprintCallable)
+	void PerformRightAttack(int Index);
+	UFUNCTION(BlueprintCallable)
+	void PerformDodge();
+
+	UFUNCTION(BlueprintCallable)
+	void SaveAttack();
+	UFUNCTION(BlueprintCallable)
+	void SaveDodge();
+	
+	UFUNCTION(BlueprintCallable)
+	void SoftLock();
+	UFUNCTION(BlueprintCallable)
+	void RotateToTarget();
+	UFUNCTION()
+	void RotateToTargetTimelineFunction(float Value);
+
+	UFUNCTION(BlueprintCallable)
+	void ResetState();
+
+	UFUNCTION(BlueprintCallable)
+	void StartWeaponCollision();
 	UFUNCTION(BlueprintCallable)
 	void EndWeaponCollision();
 	UFUNCTION(BlueprintCallable)

@@ -33,6 +33,7 @@ void ANPCBaseCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	GetMesh()->GetAnimInstance()->OnMontageEnded.AddDynamic(this, &ANPCBaseCharacter::OnAttackEnd);
+	DamageSystemComponent->OnDead.AddDynamic(this, &ANPCBaseCharacter::OnDied);
 }
 
 APatrolSpline* ANPCBaseCharacter::GetPatrolRoute_Implementation()
@@ -127,6 +128,11 @@ void ANPCBaseCharacter::OnAttackEnd(UAnimMontage* AnimMontage, bool bInterrupted
 		if (AttackEndDelegate.IsBound()) 
 			AttackEndDelegate.Broadcast();
 	}
+}
+
+void ANPCBaseCharacter::OnDied()
+{
+	Destroy();
 }
 
 
