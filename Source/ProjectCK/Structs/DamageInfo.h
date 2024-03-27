@@ -19,6 +19,14 @@ enum class EDamageResponse : uint8
 	STUN	UMETA(DisplayName = "Stun")
 };
 
+UENUM()
+enum class EAttackType : uint8
+{
+	NONE	UMETA(DisplayName = "None"),
+	LEFT	UMETA(DisplayName = "Left"),
+	RIGHT	UMETA(DisplayName = "Right")
+};
+
 USTRUCT(Blueprintable)
 struct FDamageInfo
 {
@@ -35,6 +43,9 @@ public:
 	EDamageResponse DamageResponse;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	EAttackType AttackType;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool ShouldDamageInvincible;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
@@ -42,4 +53,18 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool ForceInterrupt;
+};
+
+
+USTRUCT(Blueprintable)
+struct FAttackInfo
+{
+public:
+	GENERATED_BODY()
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool AttackSaved;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	EAttackType AttackType;
 };
