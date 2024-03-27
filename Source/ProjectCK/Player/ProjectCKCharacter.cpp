@@ -8,6 +8,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -218,6 +219,8 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 				TimerManager.SetTimer(HitStopTimer, [&]() {
 						CustomTimeDilation = 1;
 					}, 0.03f, false);
+
+				GetWorld()->GetFirstPlayerController()->ClientStartCameraShake(SmallCameraShake);
 
 				auto HitDamageInterface = Cast<IDamagableInterface>(HitResult.GetActor());
 				if (HitDamageInterface)

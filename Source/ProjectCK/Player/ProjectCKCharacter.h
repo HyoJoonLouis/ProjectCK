@@ -74,6 +74,8 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = Attack)
 	TArray<AActor*> AlreadyHitActors;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Camera)
+	TSubclassOf<class UCameraShakeBase> SmallCameraShake;
 
 	TArray<AActor*> DilationActors;
 	FTimerHandle HitStopTimer;
