@@ -52,7 +52,7 @@ public:
 	UFUNCTION()
 	void OnDied();
 
-private:
+protected:
 	UPROPERTY(EditAnywhere, Category = AI)
 	class UBehaviorTree* BTAsset;
 	UPROPERTY(EditAnywhere, Category = AI)
