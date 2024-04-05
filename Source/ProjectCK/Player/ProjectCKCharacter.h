@@ -81,6 +81,14 @@ protected:
 	FTimerHandle HitStopTimer;
 	FTimerHandle DodgeStopTimer;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Niagara)
+	class UNiagaraSystem* SwordAttackNiagara;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Niagara)
+	class UNiagaraSystem* AttackDistortionNiagara;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Niagara)
+	class UNiagaraSystem* BloodNiagara;
+
+
 	// Montages
 	UPROPERTY(EditAnywhere, Category = Attack)
 	TArray<UAnimMontage*> LeftAttackMontages;

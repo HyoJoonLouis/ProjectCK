@@ -18,7 +18,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "Blueprint/UserWidget.h"
 #include "Kismet/KismetMathLibrary.h"
-#include "MotionWarpingComponent.h"
+#include "NiagaraFunctionLibrary.h"
 
 
 
@@ -212,6 +212,15 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 
 				AlreadyHitActors.AddUnique(HitResult.GetActor());
 				
+				// Hit Niagara
+				UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), SwordAttackNiagara,
+					HitResult.ImpactPoint, (-HitResult.ImpactNormal).Rotation());
+				UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), AttackDistortionNiagara,
+					HitResult.ImpactPoint, (-HitResult.ImpactNormal).Rotation());
+				UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), BloodNiagara,
+					HitResult.ImpactPoint, (-HitResult.ImpactNormal).Rotation());
+
+				// Hit Dilation
 				FTimerManager& TimerManager = GetWorld()->GetTimerManager();
 				if (TimerManager.IsTimerActive(HitStopTimer))
 					TimerManager.ClearTimer(HitStopTimer);
@@ -220,8 +229,10 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 						CustomTimeDilation = 1;
 					}, 0.03f, false);
 
+				// Hit CameraShake
 				GetWorld()->GetFirstPlayerController()->ClientStartCameraShake(SmallCameraShake);
 
+				// Hit Damage
 				auto HitDamageInterface = Cast<IDamagableInterface>(HitResult.GetActor());
 				if (HitDamageInterface)
 				{
@@ -233,7 +244,7 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 	}
 
 	// Face to Target
-	if (TargetActor && FVector::Distance(GetActorLocation(), TargetActor->GetActorLocation()) <= 500)
+	if (IsValid(TargetActor) && FVector::Distance(GetActorLocation(), TargetActor->GetActorLocation()) <= 500)
 	{
 		Controller->SetControlRotation(UKismetMathLibrary::RInterpTo(Controller->GetControlRotation(), UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor->GetActorLocation() - FVector(0, 0, 30)), DeltaTime, 5));
 	}
@@ -342,7 +353,7 @@ void AProjectCKCharacter::Dodge(const FInputActionValue& Value)
 
 void AProjectCKCharacter::Targeting(const FInputActionValue& Value)
 {
-	if (!TargetActor)
+	if (!IsValid(TargetActor))
 	{
 		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
 		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
@@ -446,7 +457,7 @@ void AProjectCKCharacter::SaveDodge()
 
 void AProjectCKCharacter::SoftLock()
 {
-	if (TargetActor)
+	if (IsValid(TargetActor))
 	{
 		SoftTarget = NULL;
 	}
@@ -471,17 +482,20 @@ void AProjectCKCharacter::SoftLock()
 
 void AProjectCKCharacter::RotateToTarget()
 {
-	if (TargetActor || SoftTarget)
+	if (IsValid(TargetActor) || IsValid(SoftTarget))
 	{
 		TargetRotateTimeline.PlayFromStart();
+		SetActorLocation(IsValid(TargetActor) ? TargetActor->GetActorLocation() : SoftTarget->GetTargetLocation());
 	}
 }
 
 void AProjectCKCharacter::RotateToTargetTimelineFunction(float Value)
 {
-	FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), TargetActor ? TargetActor->GetActorLocation() : SoftTarget->GetActorLocation());
-	FRotator TargetRotation = FRotator(GetActorRotation().Pitch, LookAtRotation.Yaw, LookAtRotation.Roll);
-	SetActorRotation(UKismetMathLibrary::RLerp(GetActorRotation(), TargetRotation, Value, false));
+	if (IsValid(TargetActor) || IsValid(SoftTarget))
+	{
+		FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), IsValid(TargetActor) ? TargetActor->GetActorLocation() : SoftTarget->GetActorLocation());
+		FRotator TargetRotation = FRotator(GetActorRotation().Pitch, LookAtRotation.Yaw, LookAtRotation.Roll);
+	}
 }
 
 void AProjectCKCharacter::ResetState()
@@ -511,7 +525,7 @@ void AProjectCKCharacter::EndWeaponCollision()
 void AProjectCKCharacter::ChangeAttackTarget(AActor* NewTargetActor)
 {
 	auto NewTargetActorInterface = Cast<IDamagableInterface>(NewTargetActor);
-	if(TargetActor)
+	if(IsValid(TargetActor))
 		Cast<IDamagableInterface>(TargetActor)->Execute_UnsetAttackTarget(TargetActor);
 	TargetActor = NewTargetActor;
 	if(NewTargetActorInterface)

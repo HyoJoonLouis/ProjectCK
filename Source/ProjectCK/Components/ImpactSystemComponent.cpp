@@ -23,22 +23,22 @@ void UImpactSystemComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 EAttackType UImpactSystemComponent::Pop()
 {
-	if (ImpactQueue.Num() == 0)
+	if (ImpactQueue.IsEmpty())
 		return EAttackType::NONE;
 	return ImpactQueue.Pop();	
 }
 
 EAttackType UImpactSystemComponent::Peek()
 {
-	if (ImpactQueue.Num() == 0)
+	if (ImpactQueue.IsEmpty())
 		return EAttackType::NONE;
-	return ImpactQueue[0];
+	return ImpactQueue[ImpactQueue.Num() - 1];
 }
 
 EAttackType UImpactSystemComponent::Peek(int index)
 {
 	if (ImpactQueue.Num() <= index)
 		return EAttackType::NONE;
-	return ImpactQueue[index];
+	return ImpactQueue[ImpactQueue.Num() - 1 - index];
 }
 
