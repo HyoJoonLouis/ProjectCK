@@ -14,7 +14,8 @@ enum class EPlayerStates : uint8
 {
 	PASSIVE		UMETA(DisplayName = "Passive"),
 	ATTACKING	UMETA(DisplayName = "Attacking"),
-	DODGE		UMETA(DisplayName = "Dodge")
+	DODGE		UMETA(DisplayName = "Dodge"),
+	LAUNCH		UMETA(DisplayName = "Launch")
 };
 
 
@@ -50,6 +51,8 @@ protected:
 	class UInputAction* TargetingAction;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	class UInputAction* SprintAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	class UInputAction* LaunchAction;
 
 	// FSM
 	EPlayerStates CurrentState;
@@ -60,11 +63,11 @@ protected:
 	// Attack
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
 	int AttackIndex;
+	//Target
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
 	AActor* TargetActor;
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Attack)
 	AActor* SoftTarget;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Attack)
 	UCurveFloat* TargetRotateCurve;
 	FTimeline TargetRotateTimeline;
@@ -74,6 +77,12 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = Attack)
 	TArray<AActor*> AlreadyHitActors;
 
+	AActor* LaunchTarget;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Attack)
+	UCurveFloat* LaunchCharacterCurve;
+	FTimeline LaunchCharacterTimeline;
+
+	// CameraShake
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Camera)
 	TSubclassOf<class UCameraShakeBase> SmallCameraShake;
 
@@ -155,6 +164,11 @@ protected:
 	void Sprint(const struct FInputActionValue& Value);
 	UFUNCTION()
 	void StopSprint(const struct FInputActionValue& Value);
+	UFUNCTION()
+	void Launch(const struct FInputActionValue& Value);
+	UFUNCTION()
+	void StopLaunch(const struct FInputActionValue& Value);
+
 	
 	// Attack
 	UFUNCTION(BlueprintCallable)
@@ -178,6 +192,9 @@ protected:
 	void RotateToTarget();
 	UFUNCTION()
 	void RotateToTargetTimelineFunction(float Value);
+
+	UFUNCTION()
+	void LaunchCharacterTimelineFunction(float Value);
 
 	UFUNCTION(BlueprintCallable)
 	void ResetState();

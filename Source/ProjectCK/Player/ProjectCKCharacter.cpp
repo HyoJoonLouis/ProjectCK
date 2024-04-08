@@ -175,6 +175,15 @@ void AProjectCKCharacter::BeginPlay()
 		TargetRotateTimeline.SetTimelineLength(0.2f);
 	}
 
+	if (LaunchCharacterCurve)
+	{
+		FOnTimelineFloat LaunchCharacterCurveCallback;
+		LaunchCharacterCurveCallback.BindUFunction(this, FName("LaunchCharacterTimelineFunction"));
+
+		LaunchCharacterTimeline.AddInterpFloat(LaunchCharacterCurve, LaunchCharacterCurveCallback);
+		LaunchCharacterTimeline.SetTimelineLength(1.0f);
+	}
+
 	// HUD
 	if (HUDClass)
 	{
@@ -190,6 +199,7 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 
 	// Timeline
 	TargetRotateTimeline.TickTimeline(DeltaTime);
+	LaunchCharacterTimeline.TickTimeline(DeltaTime);
 
 	// Weapon Collision
 	// Better putting in C++ than in BP
@@ -253,6 +263,24 @@ void AProjectCKCharacter::Tick(float DeltaTime)
 		TargetActor = NULL;
 	}
 
+	if (CheckCurrentState({ EPlayerStates::LAUNCH }))
+	{
+		TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+		TEnumAsByte<EObjectTypeQuery> Pawn = UEngineTypes::ConvertToObjectType(ECollisionChannel::ECC_Pawn);
+		ObjectTypes.Add(Pawn);
+		TArray<AActor*> IgnoreActors;
+		IgnoreActors.Add(GetOwner());
+		FHitResult HitResult;
+
+		APlayerCameraManager* CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+		bool Result = UKismetSystemLibrary::LineTraceSingleForObjects(this, CameraManager->GetCameraLocation(), CameraManager->GetCameraLocation() + CameraManager->GetActorForwardVector() * 2000, ObjectTypes, false, IgnoreActors, EDrawDebugTrace::ForDuration, HitResult, true);
+		
+		if (Result)
+		{
+			LaunchTarget = HitResult.GetActor();
+		}
+	}
+
 }
 
 void AProjectCKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -271,6 +299,8 @@ void AProjectCKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 		
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &AProjectCKCharacter::Sprint);
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AProjectCKCharacter::StopSprint);
+
+		EnhancedInputComponent->BindAction(LaunchAction, ETriggerEvent::Started, this, &AProjectCKCharacter::Launch);
 	}
 	else
 	{
@@ -318,10 +348,17 @@ void AProjectCKCharacter::LeftMouse(const FInputActionValue& Value)
 		AttackInfo.AttackType = EAttackType::LEFT;
 		AttackInfo.AttackSaved = true;
 	}
+	else if (CheckCurrentState({EPlayerStates::LAUNCH}))
+	{
+		FVector NewPosition = LaunchTarget->GetActorLocation() + ((GetActorLocation() - LaunchTarget->GetActorLocation()).GetSafeNormal() * 250);
+		GetCharacterMovement()->Velocity = FVector(0,0,0);
+		SetActorLocation(FVector(NewPosition.X, NewPosition.Y, LaunchTarget->GetActorLocation().Z - 10), false, nullptr, ETeleportType::ResetPhysics);
+		SoftTarget = LaunchTarget;
+		StopLaunch(false);
+	}
 	else
 	{
 		Attack(EAttackType::LEFT);
-
 	}
 }
 
@@ -485,7 +522,6 @@ void AProjectCKCharacter::RotateToTarget()
 	if (IsValid(TargetActor) || IsValid(SoftTarget))
 	{
 		TargetRotateTimeline.PlayFromStart();
-		SetActorLocation(IsValid(TargetActor) ? TargetActor->GetActorLocation() : SoftTarget->GetTargetLocation());
 	}
 }
 
@@ -496,6 +532,30 @@ void AProjectCKCharacter::RotateToTargetTimelineFunction(float Value)
 		FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(GetActorLocation(), IsValid(TargetActor) ? TargetActor->GetActorLocation() : SoftTarget->GetActorLocation());
 		FRotator TargetRotation = FRotator(GetActorRotation().Pitch, LookAtRotation.Yaw, LookAtRotation.Roll);
 	}
+}
+
+void AProjectCKCharacter::Launch(const struct FInputActionValue& Value)
+{
+	if (CheckCurrentState({ EPlayerStates ::ATTACKING, EPlayerStates ::DODGE, EPlayerStates ::LAUNCH}))
+		return;
+
+	ChangeState(EPlayerStates::LAUNCH);
+	LaunchCharacter(FVector(0,0,1000), true, true);
+	ChangeToContollerDesiredRotation();
+	LaunchCharacterTimeline.PlayFromStart();
+}
+
+void AProjectCKCharacter::StopLaunch(const FInputActionValue& Value)
+{
+	ChangeState(EPlayerStates::PASSIVE);
+	ChangeToRotationToMovement();
+	LaunchCharacterTimeline.Stop();
+	GetWorldSettings()->SetTimeDilation(1);
+}
+
+void AProjectCKCharacter::LaunchCharacterTimelineFunction(float Value)
+{
+	GetWorldSettings()->SetTimeDilation(1 - Value);
 }
 
 void AProjectCKCharacter::ResetState()
